@@ -121,7 +121,7 @@ enum Foo: String {
 getSecond() === Foo.Second // true
 ```
 
-The enum is also guarded via TDZ, and is not defined until after all its variants are defined.
+The enum is itself declared as a `const`, guarded via TDZ, and is not defined until after all its variants are defined.
 
 ### Semantics
 
