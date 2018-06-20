@@ -1,5 +1,5 @@
 import {
-    setDesc as _setDesc$,
+    setValue as _setValue$,
     initEnum as _initEnum$,
     initObjectEnum as _initObjectEnum$,
     initSymbolEnum as _initSymbolEnum$,
@@ -56,13 +56,13 @@ enum Foo {
 // Semantics
 const _tmp$ = _initObjectEnum$("Foo", 0, ["FOO", "BAR", "BAZ", "WAT"])
 {
-    _setDesc$(_tmp$.FOO, "FOO")
+    _setValue$(_tmp$.FOO, "FOO")
     const FOO = _tmp$.FOO
-    _setDesc$(_tmp$.BAR, 1)
+    _setValue$(_tmp$.BAR, 1)
     const BAR = _tmp$.BAR
-    _setDesc$(_tmp$.BAZ, BAR + 1)
+    _setValue$(_tmp$.BAZ, BAR + 1)
     const BAZ = _tmp$.BAZ
-    _setDesc$(_tmp$.WAT, "WAT")
+    _setValue$(_tmp$.WAT, "WAT")
     const WAT = _tmp$.WAT
 }
 const Foo = _tmp$
