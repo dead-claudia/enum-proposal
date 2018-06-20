@@ -143,10 +143,10 @@ Each method forms a closure over the enum, so they don't need to be bound to be 
 
 Enum variant instances are frozen ordinary objects that inherit from %EnumVariantPrototype%, which itself is a frozen ordinary object that inherits from `null` and has the following properties and methods:
 
-- `variant.type` - This is a self reference.
+- `variant.type` - This is a self reference, for a potential future expansion into ADTs (which would have this set).
 - `variant.name` - This returns the declared name for the variant.
 - `variant.parentEnum` - This returns the parent enum for the variant.
-- `variant.description` - This returns the inner value within the variant.
+- `variant.value` - This returns the inner value within the variant.
 - `variant.toString()`, `variant.valueOf()`, and `variant.toJSON()` all three return the raw description, for convenience.
 
 The enum description is determined as follows:
@@ -372,7 +372,7 @@ const _makeEnum = (() => {
         get type() { return this },
         get name() { return getChecked(variantName, this) },
         get parentEnum() { return getChecked(variantParentEnum, this) },
-        get description() { return getChecked(_descriptionMap, this) },
+        get value() { return getChecked(_descriptionMap, this) },
         toString() { return getChecked(_descriptionMap, this) },
         valueOf() { return getChecked(_descriptionMap, this) },
         toJSON() { return getChecked(_descriptionMap, this) },
