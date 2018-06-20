@@ -10,6 +10,9 @@ const isExtensible = Object.isExtensible
 const symbolToStringTag = Symbol.toStringTag
 const symbolHasInstance = Symbol.hasInstance
 const symbolIterator = Symbol.iterator
+const mathMax = Math.max
+const mathMin = Math.min
+const mathAbs = Math.abs
 const Map1 = Map
 const iteratorData = /* @__PURE__ */ new WeakMap()
 const bind = /* @__PURE__ */ Function.bind.bind(Function.bind)
@@ -85,7 +88,7 @@ function installProperties(object, keys, methods) {
 }
 
 function compare(a, b) {
-    return Math.max(-1, Math.min(1, a - b | 0))
+    return mathMax(-1, mathMin(1, a - b | 0))
 }
 
 const builtinProperties = [
@@ -190,7 +193,7 @@ function initNumberEnum(name, keys, offset) {
 
         getKey(value) {
             if (typeof value === "number") {
-                const index = Math.abs(value | 0)
+                const index = mathAbs(value | 0)
 
                 if (value === index && index < end) return keys[index - offset]
             }
@@ -200,17 +203,17 @@ function initNumberEnum(name, keys, offset) {
 
         [symbolHasInstance](value) {
             if (typeof value !== "number") return false
-            const index = Math.abs(value | 0)
+            const index = mathAbs(value | 0)
 
             return value === index && index < end
         },
 
         compare(a, b) {
             if (typeof a === "number" && typeof b === "number") {
-                const intA = Math.abs(a | 0)
-                const intB = Math.abs(b | 0)
+                const intA = mathAbs(a | 0)
+                const intB = mathAbs(b | 0)
 
-                if (a === intA && b === intB && Math.max(intA, intB) < end) {
+                if (a === intA && b === intB && mathMax(intA, intB) < end) {
                     return compare(intA, intB)
                 }
             }
@@ -307,7 +310,7 @@ function initObjectEnum(name, initValues, keys) {
 
         getKey(value) {
             return isObject(value) && weakHas(indexMap, value)
-                ? value.name
+                ? weakGet(objectKeyMap, value)
                 : void 0
         },
 
