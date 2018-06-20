@@ -1,4 +1,4 @@
-export {setDesc, initEnum, initStringEnum, initNumberEnum, initObjectEnum}
+export {setValue, initEnum, initStringEnum, initNumberEnum, initObjectEnum}
 
 const objectKeys = Object.keys
 const objectCreate = Object.create
@@ -244,7 +244,7 @@ const EnumVariantPrototype = /* @__PURE__ */ (() => {
     }
 
     installProperties(EnumVariantPrototype, [
-        "type", "name", "parentEnum", "description",
+        "type", "name", "parentEnum", "value",
     ], {
         get type() { return this },
         get name() {
@@ -269,7 +269,7 @@ const EnumVariantPrototype = /* @__PURE__ */ (() => {
 
             return parent
         },
-        get description() {
+        get value() {
             if (!weakHas(objectValueMap, this)) {
                 throw new TypeError("`this` is not an enum variant!")
             }
@@ -279,15 +279,14 @@ const EnumVariantPrototype = /* @__PURE__ */ (() => {
     })
 
     defineProperty(EnumVariantPrototype, symbolToStringTag, desc)
-    desc.value =
-        getOwnPropertyDescriptor(EnumVariantPrototype, "description").get
+    desc.value = getOwnPropertyDescriptor(EnumVariantPrototype, "value").get
     defineProperty(EnumVariantPrototype, "toString", desc)
     defineProperty(EnumVariantPrototype, "valueOf", desc)
     defineProperty(EnumVariantPrototype, "toJSON", desc)
     return freeze(EnumVariantPrototype)
 })()
 
-function setDesc(key, value) {
+function setValue(key, value) {
     weakSet(objectValueMap, key, value)
 }
 
