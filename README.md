@@ -147,11 +147,11 @@ Enum variant instances are frozen ordinary objects that inherit from %EnumVarian
 - `variant.name` - This returns the declared name for the variant.
 - `variant.parentEnum` - This returns the parent enum for the variant.
 - `variant.value` - This returns the inner value within the variant.
-- `variant.toString()`, `variant.valueOf()`, and `variant.toJSON()` all three return the raw description, for convenience.
+- `variant.toString()`, `variant.valueOf()`, and `variant.toJSON()` all three return the raw value, for convenience.
 
-The enum description is determined as follows:
+The enum value is determined as follows:
 
-- If no value is given, the name itself is used as the description, as a string.
+- If no value is given, the name itself is used as the value, as a string.
 - If an explicit value is given, it's kept in raw form.
 
 For a concrete example:
@@ -165,8 +165,8 @@ enum Foo {
     BAZ = baz,
 }
 
-assert(Foo.FOO.description, "FOO")
-assert(Foo.BAR.description, 1)
+assert(Foo.FOO.value, "FOO")
+assert(Foo.BAR.value, 1)
 ```
 
 #### Desugaring
@@ -220,13 +220,13 @@ enum Foo {
 // Semantics
 const _tmp$ = _makeEnum("Foo", ["FOO", "BAR", "BAZ", "WAT"])
 {
-    _descriptionMap.set(_tmp$.FOO, "FOO")
+    _valueMap.set(_tmp$.FOO, "FOO")
     const FOO = _tmp$.FOO
-    _descriptionMap.set(_tmp$.BAR, `${1}`)
+    _valueMap.set(_tmp$.BAR, `${1}`)
     const BAR = _tmp$.BAR
-    _descriptionMap.set(_tmp$.BAZ, `${BAR + 1}`)
+    _valueMap.set(_tmp$.BAZ, `${BAR + 1}`)
     const BAZ = _tmp$.BAZ
-    _descriptionMap.set(_tmp$.WAT, "WAT")
+    _valueMap.set(_tmp$.WAT, "WAT")
     const WAT = _tmp$.WAT
 }
 const Foo = _tmp$
@@ -298,10 +298,10 @@ let _tmp$
 const Foo = _tmp$
 ```
 
-The helpers `_makeEnum` and `_descriptionMap` are defined below:
+The helpers `_makeEnum` and `_valueMap` are defined below:
 
 ```js
-const _descriptionMap = new WeakMap()
+const _valueMap = new WeakMap()
 const _makeEnum = (() => {
     "use strict"
 
@@ -366,16 +366,16 @@ const _makeEnum = (() => {
     })
 
     installProperties(EnumVariantPrototype, [
-        "type", "name", "parentEnum", "description",
+        "type", "name", "parentEnum", "value",
         "toString", "valueOf", "toJSON",
     ], {
         get type() { return this },
         get name() { return getChecked(variantName, this) },
         get parentEnum() { return getChecked(variantParentEnum, this) },
-        get value() { return getChecked(_descriptionMap, this) },
-        toString() { return getChecked(_descriptionMap, this) },
-        valueOf() { return getChecked(_descriptionMap, this) },
-        toJSON() { return getChecked(_descriptionMap, this) },
+        get value() { return getChecked(_valueMap, this) },
+        toString() { return getChecked(_valueMap, this) },
+        valueOf() { return getChecked(_valueMap, this) },
+        toJSON() { return getChecked(_valueMap, this) },
     })
 
     Object.freeze(EnumVariantPrototype)
@@ -445,7 +445,7 @@ const _makeEnum = (() => {
                 )
 
                 variantName.set(variant, keys[i])
-                _descriptionMap.set(variant, keys[i])
+                _valueMap.set(variant, keys[i])
                 variantParentEnum.set(variant, object)
                 keyMap.set(variant, i)
                 valueMap.set(variant, keys[i])
