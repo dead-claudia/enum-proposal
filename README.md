@@ -73,6 +73,8 @@ Here's what I propose:
 - Enums consist of their variants and two tables: their keys and their values.
 - Several helper methods exist on enums to make it easier for them to remap integers, strings, and symbols to their enum variants.
 
+Apologies for the length. It's simpler than it looks - I just have a lot of low-level concerns about the implementation I wanted sorted out early. (It's why many enum proposals opt for numeric variants.)
+
 ### Syntax
 
 #### Enum declarations
@@ -201,6 +203,8 @@ Enum objects are frozen objects that inherit from `null` with the following non-
 
 - `Enum.size` - This is the number of variants in the enum.
 - `Enum.compare(a, b)` - Compare two enum variants by index, and return 1 if greater, 0 if equal, and -1 if lesser. This is a closure for convenience (think: sorting) and to allow a few early optimizations with it.
+- `Enum.fromIndex(value)` - Convert a raw index to an enum instance. This is a closure for convenience (for functional people) and to allow a few early optimizations with it.
+- `Enum.fromValue(value)` - Convert a raw value to an enum instance. This is a closure for convenience (for functional people) and to allow a few early optimizations with it. This is only present on value enums.
 - `Enum.name` - This is a reference to the enum's name, or the empty string if it's anonymous.
 
 Enum objects also carry their variants as enumerable properties. They are the only enumerable properties of enums, so you can get a list of enum keys simply by using `Object.keys(Enum)`, enum variants by `Object.values(Enum)`, or pairs with both via `Object.entries(Enum)`.
@@ -261,7 +265,12 @@ I wrote some spec text because I want to make sure the low-level representation 
 
 #### Enum objects
 
-Enum variants are frozen ordinary objects with a single internal slot [[EnumVariants]] for the enum's variants. This is not required to spec (this can be computed via `Object.values(enumObject)`), but it makes certain algorithms more obvious.
+Enum variants are frozen ordinary objects with a two internal slot:
+
+- [[EnumVariants]]: the enum's variants.
+- [[EnumValueType]]: the enum's type, one of none, `"object"`, `"symbol"`, `"string"`, or `"number"`.
+
+The former is not required to spec (this can be computed via `Object.values(enumObject)`), but it makes certain algorithms more obvious.
 
 > Note: an implementation might choose to make enum variants allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
 
@@ -271,12 +280,15 @@ Abstract Operation: CreateSimpleEnum(*name*, *keys*)
 1. Assert: the number of items in *values* is also *size*.
 1. Let *E* be ObjectCreate(`null`, « [[EnumVariants]] »).
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
+1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
 1. Let *hasInstance* be CreateBuiltinFunction(steps for an enum \@\@hasInstance function, « [[Enum]] »).
 1. Set *compare*.[[Enum]] to *E*.
 1. Set *hasInstance*.[[Enum]] to *E*.
 1. Set *E*.[[EnumVariants]] to an empty list.
+1. Set *E*.[[EnumValueType]] to none.
 1. Perform ! CreateMethodProperty(*E*, `"name"`, *name*).
 1. Perform ! CreateMethodProperty(*E*, `"compare"`, *compare*).
+1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
 1. Let *index* be 0.
 1. For each *key* in *keys*,
@@ -294,16 +306,24 @@ Value Enum Factory records are used to control the creation of value enums. The 
 - [[EnumIndex]]: A reference to the enum's index.
 - [[EnumTable]]: A reference to the value table's factory.
 
-Abstract Operation: CreateValueEnumFactory(*name*)
+Abstract Operation: CreateValueEnumFactory(*name*, *type*)
 
+1. Assert: Type(*name*) is String.
+1. Assert: *type* is one of `"object"`, `"symbol"`, `"string"`, or `"number"`.
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
+1. Let *fromIndex* be CreateBuiltinFunction(steps for an enum `fromIndex` function, « [[Enum]] »).
+1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
+1. Let *hasInstance* be CreateBuiltinFunction(steps for an enum \@\@hasInstance function, « [[Enum]] »).
 1. Let *E* be ObjectCreate(`null`, « [[EnumVariants]] »).
 1. Set *compare*.[[Enum]] to *E*.
 1. Set *E*.[[EnumVariants]] to an empty list.
+1. Set *E*.[[EnumValueType]] to *type*.
 1. Perform ! CreateMethodProperty(*E*, `"name"`, *name*).
 1. Perform ! CreateMethodProperty(*E*, `"size"`, *size*).
 1. Perform ! CreateMethodProperty(*E*, `"compare"`, *compare*).
-1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *compare*).
+1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
+1. Perform ! CreateMethodProperty(*E*, `"fromValue"`, *fromValue*).
+1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
 1. Return ValueEnumFactory { [[EnumObject]]: *E*, [[EnumIndex]]: 0 }.
 
 Abstract Operation: AddValueEnumKey(*F*, *key*, *value*)
@@ -312,6 +332,7 @@ Abstract Operation: AddValueEnumKey(*F*, *key*, *value*)
 1. Let *E* be *F*.[[EnumObject]].
 1. Let *index* be *F*.[[EnumIndex]].
 1. Set *F*.[[EnumIndex]] to *index* + 1.
+1. Let *realValue* be ? CoerceEnumValue(*E*, *value*).
 1. Let *V* be CreateEnumVariant(*E*, *index*, *key*, *value*).
 1. Append *V* to *E*.[[EnumVariants]].
 1. Perform ! CreateDataProperty(*E*, *key*, *V*).
@@ -324,7 +345,18 @@ Abstract Operation: FinishValueEnum(*F*)
 1. Assert: *status* is `true`.
 1. Return *E*.
 
-> Note: value enums are constructed similarly.
+Abstract Operation: CoerceEnumValue(*E*, *value*)
+
+1. Assert: *E* has all the fields of an enum object.
+1. Let *type* be *E*.[[EnumValueType]].
+1. If *type* is `"symbol"`, then
+    1. If Type(*value*) is not Symbol, throw a `TypeError` exception.
+1. Let *result* be *value*.
+1. If *type* is `"string"`, then let *result* be ? ToString(*value*).
+1. Else, if *type* is `"number"`, then let *result* be ? ToNumber(*value*).
+1. Return *result*.
+
+> Note: an implementation might choose to omit the type field for non-value enums.
 >
 > Note: an implementation might choose to make enums allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
 
@@ -357,6 +389,40 @@ Enum `compare` functions are builtin functions of length 2 with an internal slot
 > Conveniently, this requires minimal type checking for *a* or *b*, and where *E* is bound, it can assume its type. The range check implicitly accounts for things like pointers of other types, without having to explicitly code for it, since enum variants are limited to only a certain range.
 >
 > An implementation might also choose to compile and specialize this early, since the enum's address and length is constant and known before it's exposed to ECMAScript code.
+
+> Note: value enums are constructed similarly.
+>
+> Note: an implementation might choose to make enums allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
+
+Enum `fromIndex` functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"fromIndex"`. When an enum `fromIndex` function *F* is called with argument *index*, it performs the following steps:
+
+1. Let *indexValue* be ? ToLength(*index*).
+1. Let *variants* be *F*.[[Enum]].[[EnumVariants]].
+1. Let *size* be the number of items in *variants*.
+1. If *indexValue* < *size*, return *variants*[*indexValue*].
+1. Return `undefined`.
+
+> Note: if an implementation chooses to allocate the variants as one contiguous data block right after the enum itself, it could choose to do the above this way instead:
+>
+> 1. Let *E* be *F*.[[Enum]].
+> 1. Let *result* be ? ToLength(*index*).
+> 1. Let *start* be *E*'s byte address + the size of the statically known items in enums in bytes.
+> 1. Let *end* be *E*'s byte address + the size of the statically known items in enums in bytes + the number of variants in *E* * the the size of an enum variant in bytes.
+> 1. Add *start* to *result*.
+> 1. If *result* ≥ *end*, let *result* be `undefined`.
+> 1. Return *result*.
+>
+> An implementation might also choose to compile and specialize this early, since the enum's address and length is constant and known before it's exposed to ECMAScript code.
+
+
+Enum `fromValue` functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"fromValue"`. When an enum `fromValue` function *F* is called with argument *index*, it performs the following steps:
+
+1. Let *E* be *F*.[[Enum]].
+1. Let *realValue* be ? CoerceEnumValue(*E*, *value*).
+1. For each *item* in *E*.[[EnumVariants]]:
+    1. If SameValueZero(*item*.[[VariantValue]], *realValue*) is `true`, then
+        1. Return *item*.
+1. Return `undefined`.
 
 Enum \@\@hasInstance functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"[Symbol.hasInstance]"`. When an enum \@\@hasInstance function *F* is called with argument *value*, it performs the following steps:
 
