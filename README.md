@@ -183,10 +183,12 @@ There are also enum tables. This is how you get mappings from enums to relevant 
 ```js
 // Declaration
 enum table Bar for Foo {
-    // Equivalent to FOO = "foo"
+    // Values are mandatory.
     FOO = 1,
     // Subsequent values may depend on previous values.
     BAR = Bar.get(FOO) + 2,
+    // You can also leave explicit holes
+    BAZ = *,
 }
 
 // Anonymous expression
@@ -199,7 +201,20 @@ Foo.Bar = enum table Bar for Foo {
     // ...
 }
 
-// And yes, enum tables can be transformed
+// And yes, enum tables can have types.
+enum table Bar: SomeType for Foo {
+    FOO = 1,
+    BAR = Bar.get(FOO) + 2,
+    BAZ = *,
+}
+
+Foo.Bar = enum table: SomeType for Foo {
+    // ...
+}
+
+Foo.Bar = enum table Bar: SomeType for Foo {
+    // ...
+}
 ```
 
 The separation exists for data-driven reasons - it enables and encourages you to not couple your variant data to their tables, but instead you can add them free-form independently of the type. It doesn't have obvious utility in highly object-oriented code, but for many domains like with parsers and protocol parsing, this is often useful.
@@ -403,8 +418,8 @@ The former is not required to spec (this can be computed via `Object.values(enum
 
 Abstract Operation: CreateSimpleEnum(*name*, *keys*)
 
+1. Assert: Type(*name*) is String.
 1. Let *variantCount* be the number of items in *keys*.
-1. Assert: the number of items in *values* is also *variantCount*.
 1. Let *E* be ObjectCreate(`null`, « [[EnumVariants]] »).
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
 1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
@@ -435,10 +450,11 @@ Value Enum Factory records are used to control the creation of value enums. The 
 - [[EnumIndex]]: A reference to the enum's index.
 - [[EnumPrevValue]]: A reference to the last assigned enum value, or `undefined` if none was assigned yet.
 
-Abstract Operation: CreateValueEnumFactory(*name*, *type*, *variantCount*)
+Abstract Operation: CreateValueEnumFactory(*name*, *type*, *keys*)
 
 1. Assert: Type(*name*) is String.
 1. If Type(*type*) is not Object, throw a new `TypeError` exception.
+1. Let *variantCount* be the number of items in *keys*.
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
 1. Let *fromIndex* be CreateBuiltinFunction(steps for an enum `fromIndex` function, « [[Enum]] »).
 1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
@@ -454,68 +470,59 @@ Abstract Operation: CreateValueEnumFactory(*name*, *type*, *variantCount*)
 1. Perform ! CreateMethodProperty(*E*, `"fromValue"`, *fromValue*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
 1. Perform ! CreateMethodProperty(*E*, \@\@toStringTag, `"Enum"`).
+1. Let *index* be 0.
+1. For each *key* in *keys*,
+    1. Let *V* be CreateEnumVariant(*E*, *index*, *keys*[*index*]).
+    1. Append *V* to *E*.[[EnumVariants]].
+    1. Perform ! CreateDataProperty(*E*, *keys*[*index*], *V*).
+    1. Increment *V* by 1.
+1. Let *status* be ! SetIntegrityLevel(*E*, `"frozen"`).
+1. Assert: *status* is `true`.
 1. Return ValueEnumFactory { [[EnumObject]]: *E*, [[EnumIndex]]: 0, [[EnumPrevValue]]: `undefined` }.
 
-Abstract Operation: AddValueEnumKey(*F*, *key* [ , *value* ])
+Abstract Operation: AddValueEnumKey(*F* [ , *value* ])
 
 1. Assert: *F* has all the fields of a Value Enum Factory record.
 1. Let *E* be *F*.[[EnumObject]].
 1. Let *index* be *F*.[[EnumIndex]].
-1. Let *infer* be `false`.
-1. If *value* is not present, then
-    1. Let *infer* be `true`.
-    1. Let *value* be `undefined`.
-1. Let *realValue* be ? CoerceEnumValue(*F*, *key*, *value*, *infer*).
+1. Assert: *index* is a valid index in *E*.[[EnumVariants]].
+1. Let *V* be *E*.\[[EnumVariants]][*index*].
+1. Assert *V*.[[VariantValue]] is none.
+1. Let *type* be *E*.[[EnumValueType]].
+1. Let *prev* be *F*.[[EnumPrevValue]].
+1. If *value* is present, then
+    1. Let *realValue* be ? CoerceValue(*type*, *E*, *V*, *prev*, *value*).
+1. Else,
+    1. Let *realValue* be ? CoerceValue(*type*, *E*, *V*, *prev*).
+1. Set *V*.[[VariantValue]] to *realValue*.
 1. Set *F*.[[EnumPrevValue]] to *realValue*.
-1. Let *V* be CreateEnumVariant(*E*, *index*, *key*, *value*).
-1. Append *V* to *E*.[[EnumVariants]].
 1. Set *F*.[[EnumIndex]] to *index* + 1.
-1. Perform ! CreateDataProperty(*E*, *key*, *V*).
+1. Return *V*.
+
+> Note: this assumes it's called for each enum value in the same order as its key was added to the enum.
 
 Abstract Operation: FinishValueEnum(*F*)
 
 1. Assert: *F* has all the fields of a Value Enum Factory record.
-1. Let *E* be *F*.[[EnumObject]].
-1. Let *status* be ! SetIntegrityLevel(*E*, `"frozen"`).
-1. Assert: *status* is `true`.
-1. Return *E*.
+1. Return *F*.[[EnumObject]].
 
 > Note: an implementation might choose to omit the type field for non-value enums.
 >
 > Note: an implementation might choose to make enums allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
 
-Abstract Operation: CoerceEnumValue(*F*, *key*, *value*, *infer*)
+Abstract Operation: CoerceValue(*type*, *E*, *V*, *prev* [ , *value* ])
 
-1. Assert: *F* has all the fields of a Value Enum Factory record.
-1. Let *E* be *F*.[[EnumObject]].
-1. Let *prev* be *F*.[[EnumPrevValue]].
-1. Let *type* be *E*.[[EnumValueType]].
 1. Assert: Type(*type*) is Object.
-1. Let *context* be ObjectCreate(`null`).
+1. Let *infer* be `false`.
+1. If *value* is not present, then
+    1. Let *infer* be `true`.
+    1. Let *value* be `undefined`.
+1. Let *context* be ObjectCreate(%ObjectPrototype%).
 1. Perform ! CreateDataProperty(*context*, `"enum"`, *E*).
-1. Perform ! CreateDataProperty(*context*, `"key"`, *key*).
+1. Perform ! CreateDataProperty(*context*, `"key"`, *V*.[[VariantName]]).
 1. Perform ! CreateDataProperty(*context*, `"prev"`, *prev*).
 1. Perform ! CreateDataProperty(*context*, `"infer"`, *infer*).
 1. Return ? Invoke(*type*, \@\@toVariant, « *value*, *context* »).
-
-> Note: this is basically the following ECMAScript code:
-> 
-> ```js
-> function CoerceEnumValue(F, key, value, infer) {
->     const E = F.EnumObject
->     const prev = F.EnumPrevValue
->     const type = F.EnumValueType
->     const context = {enum: E, key, prev, infer}
->     return type[Symbol.toVariant](value, context)
-> }
-> ```
-
-Abstract Operation: ResolveEnumValue(*E*, *value*)
-
-1. Assert: *E* has all the fields of an enum object.
-1. Let *type* be *E*.[[EnumValueType]].
-1. Assert: Type(*type*) is Object.
-1. Return ? Invoke(*type*, \@\@toVariant, « *value*, `undefined` »).
 
 Enum `compare` functions are builtin functions of length 2 with an internal slot [[Enum]] and their name set to `"compare"`. When an enum `compare` function *F* is called with arguments *a* and *b*, it performs the following steps:
 
@@ -574,7 +581,9 @@ Enum `fromIndex` functions are builtin functions of length 1 with an internal sl
 Enum `fromValue` functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"fromValue"`. When an enum `fromValue` function *F* is called with argument *index*, it performs the following steps:
 
 1. Let *E* be *F*.[[Enum]].
-1. Let *realValue* be ? ResolveEnumValue(*E*, *value*).
+1. Let *type* be *E*.[[EnumValueType]].
+1. Assert: Type(*type*) is Object.
+1. Let *realValue* be ? Invoke(*type*, \@\@toVariant, « *value*, `undefined` »).
 1. For each *item* in *E*.[[EnumVariants]]:
     1. If SameValueZero(*item*.[[VariantValue]], *realValue*) is `true`, then
         1. Return *item*.
@@ -637,13 +646,13 @@ Enum variants are frozen ordinary objects with their [[Prototype]] set to %EnumV
 - [[VariantName]]: The enum variant's name.
 - [[VariantValue]]: The enum variant's value.
 
-Abstract Operation: CreateEnumVariant(*E*, *index*, *name* [ , *value* ])
+Abstract Operation: CreateEnumVariant(*E*, *index*, *name*)
 
-1. If *value* is not present, let *value* be none.
-1. Let *V* be ObjectCreate(%EnumVariantPrototype%, « [[VariantEnum]], [[VariantIndex]], [[VariantValue]] »).
+1. Let *V* be ObjectCreate(%EnumVariantPrototype%, « [[VariantEnum]], [[VariantIndex]], [[VariantName]], [[VariantValue]] »).
 1. Set *V*.[[VariantEnum]] to *E*.
 1. Set *V*.[[VariantIndex]] to *index*.
-1. Set *V*.[[VariantValue]] to *value*.
+1. Set *V*.[[VariantName]] to *name*.
+1. Set *V*.[[VariantValue]] to none.
 1. Return *V*.
 
 > Note: an implementation might choose to create two separate variant types, one with values and one without. This could be done using the same variant data structure otherwise, and it simplifies a few optimizations with coercions.
@@ -708,39 +717,80 @@ Enum tables are ordinary objects with three internal slots, [[TableName]] for th
 
 > Note: an implementation might choose to make enum tables allocated in one contiguous data block, where the list of values is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
 
-Abstract Operation: CreateEnumTable(*name*, *E*)
+Enum Table Factory records are used to control the creation of value enums. The schema name used within this specification to tag literal descriptions of Value Enum Factory records is "EnumTableFactory". They contain the following fields:
 
+- [[TableObject]]: A reference to the in-progress enum table object.
+- [[TableType]]: A reference to the enum table's type. It is only used during table initialization, so it's not persisted in the enum table itself.
+- [[TableAssigned]]: The number of elements assigned to the table so far.
+- [[TablePrevValue]]: The previously assigned value.
+
+Abstract Operation: CreateEnumTable(*name*, *E*, *keys* [ , *type* ])
+
+1. Assert: Type(*name*) is String.
+1. Assert: *keys* is a list of String values.
 1. If *E* does not have all of the internal slots of an enum object, throw a `TypeError`.
 1. Let *variantCount* be the number of items in *E*.[[EnumVariants]].
+1. Let *keysCount* be the number of items in *keys*.
+1. If *variantCount* ≠ *keysCount*, throw a `TypeError` exception.
+1. For each *item* in *E*.[[EnumVariants]] in List order, do
+    1. Let *found* be `false`.
+    1. For each *key* within *keys*, do
+        1. If *item*.[[VariantName]] is the same String value as *keys*, then set *found* to `true`.
+    1. If *found* is `false`, throw a `TypeError` exception.
 1. Let *T* be ObjectCreate(%EnumTablePrototype%, « [[TableName]], [[TableEnum]], [[TableValues]] »).
 1. Set *T*.[[TableName]] to *name*.
 1. Set *T*.[[TableEnum]] to *E*.
 1. Set *T*.[[TableValues]] to a list of *variantCount* nones.
+1. If *type* was not passed, let *type* be `undefined`.
 1. Let *status* be ! SetIntegrityLevel(*T*, `"frozen"`).
 1. Assert: *status* is `true`.
+1. Return EnumTableFactory { [[TableObject]]: *T*, [[TableType]]: *type*, [[TableAssigned]]: 0, [[TablePrevValue]]: `undefined` }.
+
+Abstract Operation: SetEnumTableValue(*F*, *key* [ , *value* ])
+
+1. Assert: *F* has all the fields of a Enum Table Factory record.
+1. Assert: Type(*key*) is String.
+1. Let *T* be *F*.[[TableObject]].
+1. Let *type* be *F*.[[TableType]].
+1. Let *E* be *T*.[[TableEnum]].
+1. Let *done* be `false`
+1. For each *item* in *E*.[[EnumVariants]], do
+    1. If *done* is `false` and *item*.[[VariantName]] is the same String value as *key*, then
+        1. Let *V* be *item*.
+        1. Let *done* be `true`.
+1. Assert: *done* is `true`.
+1. Assert: *E* and *V*.[[VariantEnum]] refer to the same object.
+1. Let *index* be *V*.[[VariantIndex]].
+1. If *value* was not passed, then
+    1. Let *realValue* be none.
+    1. If *type* is not `undefined`, then
+        1. Let *prev* be *F*.[[TablePrevValue]].
+        1. Let *next* be ? CoerceValue(*type*, *E*, *V*, *prev*).
+        1. Set *F*.[[TablePrevValue]] to *next*.
+1. Else, if *type* is `undefined`, then
+    1. Let *realValue* be *value*.
+1. Else,
+    1. Let *prev* be *F*.[[TablePrevValue]].
+    1. Let *realValue* be ? CoerceValue(*type*, *E*, *V*, *prev*, *value*).
+    1. Set *F*.[[TablePrevValue]] to *realValue*.
+1. Set *T*.\[[TableValues]][*index*] to *realValue*.
+1. Set *F*.[[TableAssigned]] to *F*.[[TableAssigned]] + 1.
+
+Abstract Operation: FinishEnumTable(*F*)
+
+1. Assert: *F* has all the fields of a Enum Table Factory record.
+1. Let *T* be *F*.[[TableObject]].
+1. Let *keysCount* be the number of items in *T*.[[TableValues]].
+1. Assert: *F*.[[TableAssigned]] = *keysCount*.
 1. Return *T*.
 
-Abstract Operation: SetEnumTableValue(*T*, *key*, *value*)
-
-1. Assert: *T* has all the fields of a Value Enum Factory record.
-1. Assert: *key* has all the internal slots of an enum variant object.
-1. Let *tableEnum* be *T*.[[TableEnum]].
-1. Let *keyEnum* be *key*.[[VariantEnum]].
-1. Assert: *tableEnum* and *keyEnum* refer to the same object.
-1. Let *keyIndex* be *key*.[[VariantIndex]].
-1. Set *T*.\[[TableValues]][*index*] to *value*.
-
-Abstract Operation: FinishEnumTable(*T*)
-
-1. Assert: *T* has all the fields of a Value Enum Factory record.
-1. Let *values* be *T*.[[TableValues]].
-1. Let *index* be 0.
-1. Let *end* be the number of items in *values*.
-1. Repeat, while *index* < *end*,
-    1. Let *value* be *values*[*index*].
-    1. If *value* is none, set *values*[*index*] to `undefined`
-
 > Note: this is unlikely to fail once, but if it does, it's not likely to be predictable. So it might be a good idea to structure the loop in two tiers rather than one.
+
+Abstract Operation: GetVariantIndexForKey(*E*, *key*)
+
+1. For each *item* in *E*.[[EnumVariants]], do
+    1. If *item*.[[VariantName]] is the same String value as *key*, return *item*.[[VariantValue]].
+1. Return none.
 
 %EnumTableIteratorPrototype% is an ordinary object that inherits from %IteratorPrototype%. It has one method, `next`, which when called, performs the following steps:
 
