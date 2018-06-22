@@ -290,6 +290,7 @@ Abstract Operation: CreateSimpleEnum(*name*, *keys*)
 1. Perform ! CreateMethodProperty(*E*, `"compare"`, *compare*).
 1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
+1. Perform ! CreateMethodProperty(*E*, \@\@toStringTag, `"Enum"`).
 1. Let *index* be 0.
 1. For each *key* in *keys*,
     1. Let *V* be CreateEnumVariant(*E*, *index*, *keys*[*index*]).
@@ -304,7 +305,6 @@ Value Enum Factory records are used to control the creation of value enums. The 
 
 - [[EnumObject]]: A reference to the in-progress enum object.
 - [[EnumIndex]]: A reference to the enum's index.
-- [[EnumTable]]: A reference to the value table's factory.
 
 Abstract Operation: CreateValueEnumFactory(*name*, *type*)
 
@@ -324,6 +324,7 @@ Abstract Operation: CreateValueEnumFactory(*name*, *type*)
 1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
 1. Perform ! CreateMethodProperty(*E*, `"fromValue"`, *fromValue*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
+1. Perform ! CreateMethodProperty(*E*, \@\@toStringTag, `"Enum"`).
 1. Return ValueEnumFactory { [[EnumObject]]: *E*, [[EnumIndex]]: 0 }.
 
 Abstract Operation: AddValueEnumKey(*F*, *key*, *value*)
@@ -349,6 +350,7 @@ Abstract Operation: CoerceEnumValue(*E*, *value*)
 
 1. Assert: *E* has all the fields of an enum object.
 1. Let *type* be *E*.[[EnumValueType]].
+1. Assert: *type* is not none.
 1. If *type* is `"symbol"`, then
     1. If Type(*value*) is not Symbol, throw a `TypeError` exception.
 1. Let *result* be *value*.
@@ -413,7 +415,6 @@ Enum `fromIndex` functions are builtin functions of length 1 with an internal sl
 > 1. Return *result*.
 >
 > An implementation might also choose to compile and specialize this early, since the enum's address and length is constant and known before it's exposed to ECMAScript code.
-
 
 Enum `fromValue` functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"fromValue"`. When an enum `fromValue` function *F* is called with argument *index*, it performs the following steps:
 
@@ -543,6 +544,8 @@ Abstract Operation: LookupVariantValue(*V* [ , *default* ])
 
 - %EnumVariantPrototype%.toString: Alias for %EnumVariantPrototype%.valueOf.
 - %EnumVariantPrototype%.toJSON: Alias for %EnumVariantPrototype%.valueOf.
+
+- %EnumVariantPrototype%[\@\@toStringTag]: `"Enum Variant"`.
 
 #### Enum tables
 
@@ -677,6 +680,8 @@ Abstract Operation: EnumTableLookup(*T*, *V*):
     1. Return ! CreateEnumTableIterator(*T*, `"key+value"`).
 
 - %EnumTablePrototype%[\@\@iterator]: Alias for %EnumTablePrototype%.entries.
+
+- %EnumTablePrototype%[\@\@toStringTag]: `"Enum Table"`.
 
 #### Implementation Tips
 
