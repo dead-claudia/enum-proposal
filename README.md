@@ -322,8 +322,8 @@ Enum tables are frozen objects that inherit from `null` (through an intermediate
 
 - `Table.name` - This returns the table's declared name.
 - `Table.enum` - This returns the table's parent enum.
-- `Table.has(variant)` - Return `true` if the variant has the corresponding value.
-- `Table.get(variant)` - Get the corresponding value for this variant, or throw a `ReferenceError` if it doesn't exist or hasn't been set yet.
+- `Table.has(variant)` - Return `true` if the variant has a corresponding value set.
+- `Table.get(variant)` - Get the corresponding value for this variant, return `undefined` if it doesn't exist, or throw a `ReferenceError` if it hasn't been set yet.
 - `Table.keys()` - Return an iterator for the variants in this enum.
 - `Table.values()` - Return an iterator for the values in this enum.
 - `Table.entries()` - Return an iterator for the variants and values zipped in pairs in this enum.
@@ -730,6 +730,18 @@ Abstract Operation: SetEnumTableValue(*T*, *key*, *value*)
 1. Let *keyIndex* be *key*.[[VariantIndex]].
 1. Set *T*.\[[TableValues]][*index*] to *value*.
 
+Abstract Operation: FinishEnumTable(*T*)
+
+1. Assert: *T* has all the fields of a Value Enum Factory record.
+1. Let *values* be *T*.[[TableValues]].
+1. Let *index* be 0.
+1. Let *end* be the number of items in *values*.
+1. Repeat, while *index* < *end*,
+    1. Let *value* be *values*[*index*].
+    1. If *value* is none, set *values*[*index*] to `undefined`
+
+> Note: this is unlikely to fail once, but if it does, it's not likely to be predictable. So it might be a good idea to structure the loop in two tiers rather than one.
+
 %EnumTableIteratorPrototype% is an ordinary object that inherits from %IteratorPrototype%. It has one method, `next`, which when called, performs the following steps:
 
 1. Let *O* be `this` value.
@@ -776,11 +788,12 @@ Abstract Operation: EnumTableLookup(*T*, *V*):
 1. Assert: *tableEnum* and *variantEnum* refer to the same object.
 1. Let *variants* be *tableEnum*.[[EnumVariants]].
 1. Let *values* be *T*.[[TableValues]].
+1. Assert: *variants* and *values* have the same number of items.
 1. Let *index* be 0.
 1. For each *item* in *variants* in List order, do
     1. If *V* and *item* refer to the same object, return *values*[*index*].
     1. Increment *index* by 1.
-1. Return none.
+1. Assert: this step is never reached.
 
 > Note: if an implementation chooses to allocate the variants and values as one contiguous data block, it could choose to do the above this way instead:
 >
