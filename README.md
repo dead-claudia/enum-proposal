@@ -106,6 +106,76 @@ Foo.Bar = enum Bar {
 }
 ```
 
+#### Value enums
+
+The basic syntax for value enums are this:
+
+```js
+// `SomeType` here can be any object/function/whatever that has a
+// `Symbol.toVariant` method. It's used to transform variants' values as well as
+// optionally check them.
+enum Foo: SomeType {
+    // Equivalent to `FOO = "FOO"` for `enum Foo: String`, `FOO = 0` for
+    // `enum foo: Number`, or `FOO = Symbol("Foo.FOO")` for `enum foo: Symbol`.
+    FOO,
+    // Values may be specified, and the result of calling
+    // `SomeType[Symbol.variant]` with it and the relevant context is used as
+    // the return value for `value`, `toString`, `valueOf`, and `toJSON`.
+    BAR = FOO.value.name + "bar",
+}
+
+// And yes, enum expressions *can* be value enums.
+Foo.Bar = enum: SomeType {
+    // ...
+}
+```
+
+These allow validating and transforming the type as appropriate. Common implementations exist for `Object` (passes all through untouched, but infers symbols), `Symbol` (validates its entries are symbols), `Number` (coerces its values to numbers, and infers `prev + 1`), and a few other globals, but custom ones are pretty easy to write. For example, if you wanted an enum of offsets, you could define an enum like this (pulled from [here](https://github.com/isiahmeadows/clean-match/blob/master/clean-match.js#L144-L149) and [here](https://github.com/isiahmeadows/enigma/blob/master/src/common.ts#L5-L21)):
+
+```js
+const Flags = {
+    [Symbol.toVariant](value, context) {
+        if (context == null || !context.infer) return value | 0
+        const prev = context.prev | 0
+        // Round to next power of two.
+        const result = 1 << 32 - Math.clz32(prev)
+        if (result === 1 && prev !== 0) throw new TypeError("Too many flags!")
+        return result
+    }
+}
+
+enum MatchContext: Flags { Strict, Initial, SameProto }
+
+enum ParseContext: Flags {
+    Empty = 0,
+
+    OptionsNext,
+    OptionsRanges,
+    OptionsJSX,
+    OptionsRaw,
+
+    Strict,
+    Module,
+
+    ExpressionStart,
+    TaggedTemplate,
+}
+```
+
+During initialization, previously declared enum variants are available as constants within the scope of subsequent enum variant initializers, but later declared variants are behind a TDZ within that scope, but their bindings do not escape the enum's scope. This means, normally you'd get a `ReferenceError` if you were to evaluate one that's not ready yet, but if you were to do something like this, it would not error.
+
+```js
+let getSecond
+enum Foo: String {
+    First = (getSecond = () => Second, "First"),
+    Second = "Second",
+}
+
+getSecond() === Foo.Second // true
+```
+
+The enum is itself declared as a `const`, guarded via TDZ, and is not defined until after all its variants are defined.
+
 #### Enum tables
 
 There are also enum tables. This is how you get mappings from enums to relevant values.
@@ -128,80 +198,84 @@ Foo.Bar = enum table for Foo {
 Foo.Bar = enum table Bar for Foo {
     // ...
 }
+
+// And yes, enum tables can be transformed
 ```
 
 The separation exists for data-driven reasons - it enables and encourages you to not couple your variant data to their tables, but instead you can add them free-form independently of the type. It doesn't have obvious utility in highly object-oriented code, but for many domains like with parsers and protocol parsing, this is often useful.
-
-#### Value enums
-
-The basic syntax for value enums are this:
-
-```js
-// Object enum. Note that `Object` here is syntactic.
-enum Foo: Object {
-    // Mostly equivalent to `FOO = "FOO"`
-    FOO,
-    // Values may be specified, and is returned from `value`, `toString`, `valueOf`,
-    // and `toJSON`.
-    BAR = FOO.symbol.description + "bar",
-}
-
-// Symbol enum. Note that `Symbol` here is syntactic.
-enum Foo: Symbol {
-    // Mostly equivalent to `FOO = Symbol("FOO")`
-    FOO,
-    // Values may be specified, but it is a type error for them to not evaluate
-    // to a symbol.
-    BAR = Symbol(FOO.symbol.description + "bar"),
-}
-
-// String enum. Note that `String` here is syntactic.
-enum Foo: String {
-    // Equivalent to FOO = "foo"
-    FOO,
-    // Subsequent values may depend on previous values.
-    BAR = FOO + "bar",
-}
-
-// Number enum. Note that `Number` here is syntactic.
-enum Foo: Number {
-    // Equivalent to FOO = 0
-    FOO,
-    // Subsequent values may depend on previous values.
-    BAR = FOO + 1,
-}
-
-// And yes, enum expressions *can* be value enums.
-Foo.Bar = enum: String {
-    // ...
-}
-```
-
-These validate their values' types and offer a few potential optimization opportunities.
-
-During initialization, previously declared enum variants are available as constants within the scope of subsequent enum variant initializers, but later declared variants are behind a TDZ within that scope, but their bindings do not escape the enum's scope. This means, normally you'd get a `ReferenceError` if you were to evaluate one that's not ready yet, but if you were to do something like this, it would not error.
-
-```js
-let getSecond
-enum Foo: String {
-    First = (getSecond = () => Second, "First"),
-    Second = "Second",
-}
-
-getSecond() === Foo.Second // true
-```
-
-The enum is itself declared as a `const`, guarded via TDZ, and is not defined until after all its variants are defined.
 
 ### High-level semantics
 
 I don't currently have a polyfill/runtime ready, but it's definitely on my TODO list.
 
+#### Well known symbols
+
+There is a new well-known symbol \@\@toVariant, for coercing a value to an enum variant. It's called with the value (or `undefined` if it doesn't exist) and a context parameter, either an `{enum, key, index, infer}` object on initialization or `undefined` on lookup (i.e. with `Enum.fromValue`).
+
+Here are some builtin implementations for this well-known symbol:
+
+```js
+Object[Symbol.toVariant] = (value, context) => {
+    return _inferVariantSymbol(value, context, false)
+}
+
+Symbol[Symbol.toVariant] = (value, context) => {
+    return _inferVariantSymbol(value, context, true)
+}
+
+String[Symbol.toVariant] = (value, context) => {
+    return `${context != null && context.infer ? context.key : value}`
+}
+
+Number[Symbol.toVariant] = (value, context) => {
+    if (context != null && context.infer) {
+        value = context.prev
+        return value == null ? 0 : value + 1
+    }
+    return +value
+}
+
+BigInt[Symbol.toVariant] = (value, context) => {
+    if (context != null && context.infer) {
+        value = context.prev
+        return value == null ? 0n : value + 1n
+    }
+    return BigInt(value)
+}
+
+Function.prototype[Symbol.toVariant] = function (value, context) {
+    if (context != null && context.infer || !(value instanceof this)) {
+        // The side effects within `_inferName` and `this.name` don't really
+        // exist
+        throw new TypeError(
+            `Expected ${_inferName(context)} to be an instance of ${this.name}`
+        )
+    }
+    return value
+}
+
+// Private helper functions.
+function _inferName(context) {
+    return context != null
+        ? `${context.enum.name || '<anonymous>'}.${context.key}`
+        : "`value`"
+}
+
+function _inferVariantSymbol(value, context, checkSymbol) {
+    if (context != null && context.infer) return Symbol(_inferName(context))
+    if (checkSymbol && typeof value !== "symbol") {
+        // The side effects within `_inferName` don't really exist
+        throw new TypeError(`Expected ${_inferName(context)} to be a symbol`)
+    }
+    return value
+}
+```
+
 #### Enum objects
 
 Enum objects are frozen objects that inherit from `null` with the following non-enumerable properties:
 
-- `Enum.size` - This is the number of variants in the enum.
+- `Enum.variantCount` - This is the number of variants in the enum.
 - `Enum.compare(a, b)` - Compare two enum variants by index, and return 1 if greater, 0 if equal, and -1 if lesser. This is a closure for convenience (think: sorting) and to allow a few early optimizations with it.
 - `Enum.fromIndex(value)` - Convert a raw index to an enum instance. This is a closure for convenience (for functional people) and to allow a few early optimizations with it.
 - `Enum.fromValue(value)` - Convert a raw value to an enum instance. This is a closure for convenience (for functional people) and to allow a few early optimizations with it. This is only present on value enums.
@@ -231,7 +305,7 @@ For a concrete example:
 ```js
 const baz = {}
 
-enum Foo {
+enum Foo: Object {
     FOO,
     BAR = 1,
     BAZ = baz,
@@ -263,21 +337,74 @@ Each method forms a closure over the table for convenience (fewer `this` problem
 
 I wrote some spec text because I want to make sure the low-level representation is still fast, and so I had to have an idea how it'd be spec'd and implemented. I'm designing for performance and future optimization opportunity, since I know many of these methods *will* be used in performance-sensitive contexts. Don't take that to mean this is mature at all - it's still something I've been iterating on for a while.
 
+#### Well known symbols
+
+There is a new well-known symbol \@\@toVariant, for coercing a value to an enum variant. Here are the default implementations for various builtins:
+
+- Object\[\@\@toVariant](*value*, *context*):
+    1. Return ? InferVariantSymbol(*context*, `false`).
+
+- Symbol\[\@\@toVariant](*value*, *context*):
+    1. Return ? InferVariantSymbol(*context*, `true`).
+
+- String\[\@\@toVariant](*value*, *context*):
+    1. If ? ValueIsInferred(*context*) is `true`, then
+        1. Let *value* be ? Get(*context*, `"key"`).
+    1. Return ? ToString(*value*).
+
+- Number\[\@\@toVariant](*value*, *context*):
+    1. If ? ValueIsInferred(*context*) is `true`, then
+        1. Let *value* be ? Get(*context*, `"index"`).
+        1. If *value* is `undefined` or `null`, return 0.
+        1. Return *value* + 1.
+    1. Return *value*.
+
+- BigInt\[\@\@toVariant](*value*, *context*):
+    1. If ? ValueIsInferred(*context*) is `true`, then
+        1. Let *value* be ? Get(*context*, `"index"`).
+        1. If *value* is `undefined` or `null`, return 0n.
+        1. Return ToBigInt(*value*) + 1n.
+    1. Return ToBigInt(*value*).
+
+- Function.prototype\[\@\@toVariant](*value*, *context*):
+    1. If ? ValueIsInferred(*context*) is `true`, then throw a `TypeError` exception.
+    1. Let *F* be `this` value.
+    1. If ? InstanceofOperator(*value*, *F*) is `false`, throw a `TypeError` exception.
+    1. Return *value*.
+
+Abstract Operation: ValueIsInferred(*context*)
+
+1. If *context* is `undefined` or `null`, return `false`.
+1. Return ? ToBoolean(? Get(*context*, `"infer"`))
+
+Abstract Operation: InferVariantSymbol(*context*, *checkSymbol*)
+
+1. If ? ValueIsInferred(*context*) is `false`, then
+    1. If *checkSymbol* is `true` and Type(*value*) is not Symbol, throw a `TypeError` exception.
+    1. Return *value*.
+1. Let *name* be ? Get(*E*, `"name"`).
+1. If *name* is the empty String, let *name* be the String value `"<anonymous>"`.
+1. Let *key* be ? ToString(? Get(*context*, `"key"`)).
+1. Let *value* be the string-concatenation of *name*, `"."`, and *key*.
+1. Return ! Call(%Symbol%, `undefined`, « *value* »).
+
 #### Enum objects
 
-Enum variants are frozen ordinary objects with a two internal slot:
+Enum variants are frozen ordinary objects with a two internal slots:
 
+- [[EnumValueType]]: the enum's type, either `undefined` or an object implementing \@\@toVariant.
 - [[EnumVariants]]: the enum's variants.
-- [[EnumValueType]]: the enum's type, one of none, `"object"`, `"symbol"`, `"string"`, or `"number"`.
 
 The former is not required to spec (this can be computed via `Object.values(enumObject)`), but it makes certain algorithms more obvious.
 
 > Note: an implementation might choose to make enum variants allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
+>
+> Note: [[EnumValueType]] is never accessed after initialization on enum objects without a `"fromValue"` method. An implementation might choose to elide it, but keep in mind it would complicate many of the other optimizations in notes like these, such as that in enum `compare` methods.
 
 Abstract Operation: CreateSimpleEnum(*name*, *keys*)
 
-1. Let *size* be the number of items in *keys*.
-1. Assert: the number of items in *values* is also *size*.
+1. Let *variantCount* be the number of items in *keys*.
+1. Assert: the number of items in *values* is also *variantCount*.
 1. Let *E* be ObjectCreate(`null`, « [[EnumVariants]] »).
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
 1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
@@ -285,8 +412,9 @@ Abstract Operation: CreateSimpleEnum(*name*, *keys*)
 1. Set *compare*.[[Enum]] to *E*.
 1. Set *hasInstance*.[[Enum]] to *E*.
 1. Set *E*.[[EnumVariants]] to an empty list.
-1. Set *E*.[[EnumValueType]] to none.
+1. Set *E*.[[EnumValueType]] to `undefined`.
 1. Perform ! CreateMethodProperty(*E*, `"name"`, *name*).
+1. Perform ! CreateMethodProperty(*E*, `"variantCount"`, *variantCount*).
 1. Perform ! CreateMethodProperty(*E*, `"compare"`, *compare*).
 1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
@@ -305,11 +433,12 @@ Value Enum Factory records are used to control the creation of value enums. The 
 
 - [[EnumObject]]: A reference to the in-progress enum object.
 - [[EnumIndex]]: A reference to the enum's index.
+- [[EnumPrevValue]]: A reference to the last assigned enum value, or `undefined` if none was assigned yet.
 
-Abstract Operation: CreateValueEnumFactory(*name*, *type*)
+Abstract Operation: CreateValueEnumFactory(*name*, *type*, *variantCount*)
 
 1. Assert: Type(*name*) is String.
-1. Assert: *type* is one of `"object"`, `"symbol"`, `"string"`, or `"number"`.
+1. If Type(*type*) is not Object, throw a new `TypeError` exception.
 1. Let *compare* be CreateBuiltinFunction(steps for an enum `compare` function, « [[Enum]] »).
 1. Let *fromIndex* be CreateBuiltinFunction(steps for an enum `fromIndex` function, « [[Enum]] »).
 1. Let *fromValue* be CreateBuiltinFunction(steps for an enum `fromValue` function, « [[Enum]] »).
@@ -319,23 +448,28 @@ Abstract Operation: CreateValueEnumFactory(*name*, *type*)
 1. Set *E*.[[EnumVariants]] to an empty list.
 1. Set *E*.[[EnumValueType]] to *type*.
 1. Perform ! CreateMethodProperty(*E*, `"name"`, *name*).
-1. Perform ! CreateMethodProperty(*E*, `"size"`, *size*).
+1. Perform ! CreateMethodProperty(*E*, `"variantCount"`, *variantCount*).
 1. Perform ! CreateMethodProperty(*E*, `"compare"`, *compare*).
 1. Perform ! CreateMethodProperty(*E*, `"fromIndex"`, *fromIndex*).
 1. Perform ! CreateMethodProperty(*E*, `"fromValue"`, *fromValue*).
 1. Perform ! CreateMethodProperty(*E*, \@\@hasInstance, *hasInstance*).
 1. Perform ! CreateMethodProperty(*E*, \@\@toStringTag, `"Enum"`).
-1. Return ValueEnumFactory { [[EnumObject]]: *E*, [[EnumIndex]]: 0 }.
+1. Return ValueEnumFactory { [[EnumObject]]: *E*, [[EnumIndex]]: 0, [[EnumPrevValue]]: `undefined` }.
 
-Abstract Operation: AddValueEnumKey(*F*, *key*, *value*)
+Abstract Operation: AddValueEnumKey(*F*, *key* [ , *value* ])
 
 1. Assert: *F* has all the fields of a Value Enum Factory record.
 1. Let *E* be *F*.[[EnumObject]].
 1. Let *index* be *F*.[[EnumIndex]].
-1. Set *F*.[[EnumIndex]] to *index* + 1.
-1. Let *realValue* be ? CoerceEnumValue(*E*, *value*).
+1. Let *infer* be `false`.
+1. If *value* is not present, then
+    1. Let *infer* be `true`.
+    1. Let *value* be `undefined`.
+1. Let *realValue* be ? CoerceEnumValue(*F*, *key*, *value*, *infer*).
+1. Set *F*.[[EnumPrevValue]] to *realValue*.
 1. Let *V* be CreateEnumVariant(*E*, *index*, *key*, *value*).
 1. Append *V* to *E*.[[EnumVariants]].
+1. Set *F*.[[EnumIndex]] to *index* + 1.
 1. Perform ! CreateDataProperty(*E*, *key*, *V*).
 
 Abstract Operation: FinishValueEnum(*F*)
@@ -346,21 +480,42 @@ Abstract Operation: FinishValueEnum(*F*)
 1. Assert: *status* is `true`.
 1. Return *E*.
 
-Abstract Operation: CoerceEnumValue(*E*, *value*)
-
-1. Assert: *E* has all the fields of an enum object.
-1. Let *type* be *E*.[[EnumValueType]].
-1. Assert: *type* is not none.
-1. If *type* is `"symbol"`, then
-    1. If Type(*value*) is not Symbol, throw a `TypeError` exception.
-1. Let *result* be *value*.
-1. If *type* is `"string"`, then let *result* be ? ToString(*value*).
-1. Else, if *type* is `"number"`, then let *result* be ? ToNumber(*value*).
-1. Return *result*.
-
 > Note: an implementation might choose to omit the type field for non-value enums.
 >
 > Note: an implementation might choose to make enums allocated in one contiguous data block, where the list of variants is appended directly after the rest of the static members and object properties, much like how C's flexible array members work.
+
+Abstract Operation: CoerceEnumValue(*F*, *key*, *value*, *infer*)
+
+1. Assert: *F* has all the fields of a Value Enum Factory record.
+1. Let *E* be *F*.[[EnumObject]].
+1. Let *prev* be *F*.[[EnumPrevValue]].
+1. Let *type* be *E*.[[EnumValueType]].
+1. Assert: Type(*type*) is Object.
+1. Let *context* be ObjectCreate(`null`).
+1. Perform ! CreateDataProperty(*context*, `"enum"`, *E*).
+1. Perform ! CreateDataProperty(*context*, `"key"`, *key*).
+1. Perform ! CreateDataProperty(*context*, `"prev"`, *prev*).
+1. Perform ! CreateDataProperty(*context*, `"infer"`, *infer*).
+1. Return ? Invoke(*type*, \@\@toVariant, « *value*, *context* »).
+
+> Note: this is basically the following ECMAScript code:
+> 
+> ```js
+> function CoerceEnumValue(F, key, value, infer) {
+>     const E = F.EnumObject
+>     const prev = F.EnumPrevValue
+>     const type = F.EnumValueType
+>     const context = {enum: E, key, prev, infer}
+>     return type[Symbol.toVariant](value, context)
+> }
+> ```
+
+Abstract Operation: ResolveEnumValue(*E*, *value*)
+
+1. Assert: *E* has all the fields of an enum object.
+1. Let *type* be *E*.[[EnumValueType]].
+1. Assert: Type(*type*) is Object.
+1. Return ? Invoke(*type*, \@\@toVariant, « *value*, `undefined` »).
 
 Enum `compare` functions are builtin functions of length 2 with an internal slot [[Enum]] and their name set to `"compare"`. When an enum `compare` function *F* is called with arguments *a* and *b*, it performs the following steps:
 
@@ -400,8 +555,8 @@ Enum `fromIndex` functions are builtin functions of length 1 with an internal sl
 
 1. Let *indexValue* be ? ToLength(*index*).
 1. Let *variants* be *F*.[[Enum]].[[EnumVariants]].
-1. Let *size* be the number of items in *variants*.
-1. If *indexValue* < *size*, return *variants*[*indexValue*].
+1. Let *variantCount* be the number of items in *variants*.
+1. If *indexValue* < *variantCount*, return *variants*[*indexValue*].
 1. Return `undefined`.
 
 > Note: if an implementation chooses to allocate the variants as one contiguous data block right after the enum itself, it could choose to do the above this way instead:
@@ -419,7 +574,7 @@ Enum `fromIndex` functions are builtin functions of length 1 with an internal sl
 Enum `fromValue` functions are builtin functions of length 1 with an internal slot [[Enum]] and their name set to `"fromValue"`. When an enum `fromValue` function *F* is called with argument *index*, it performs the following steps:
 
 1. Let *E* be *F*.[[Enum]].
-1. Let *realValue* be ? CoerceEnumValue(*E*, *value*).
+1. Let *realValue* be ? ResolveEnumValue(*E*, *value*).
 1. For each *item* in *E*.[[EnumVariants]]:
     1. If SameValueZero(*item*.[[VariantValue]], *realValue*) is `true`, then
         1. Return *item*.
@@ -545,7 +700,7 @@ Abstract Operation: LookupVariantValue(*V* [ , *default* ])
 - %EnumVariantPrototype%.toString: Alias for %EnumVariantPrototype%.valueOf.
 - %EnumVariantPrototype%.toJSON: Alias for %EnumVariantPrototype%.valueOf.
 
-- %EnumVariantPrototype%[\@\@toStringTag]: `"Enum Variant"`.
+- %EnumVariantPrototype%[\@\@toStringTag]: The String value `"Enum Variant"`.
 
 #### Enum tables
 
@@ -556,11 +711,11 @@ Enum tables are ordinary objects with three internal slots, [[TableName]] for th
 Abstract Operation: CreateEnumTable(*name*, *E*)
 
 1. If *E* does not have all of the internal slots of an enum object, throw a `TypeError`.
-1. Let *size* be ! Get(*E*, `"size"`).
+1. Let *variantCount* be the number of items in *E*.[[EnumVariants]].
 1. Let *T* be ObjectCreate(%EnumTablePrototype%, « [[TableName]], [[TableEnum]], [[TableValues]] »).
 1. Set *T*.[[TableName]] to *name*.
 1. Set *T*.[[TableEnum]] to *E*.
-1. Set *T*.[[TableValues]] to a list of *size* nones.
+1. Set *T*.[[TableValues]] to a list of *variantCount* nones.
 1. Let *status* be ! SetIntegrityLevel(*T*, `"frozen"`).
 1. Assert: *status* is `true`.
 1. Return *T*.
@@ -681,7 +836,7 @@ Abstract Operation: EnumTableLookup(*T*, *V*):
 
 - %EnumTablePrototype%[\@\@iterator]: Alias for %EnumTablePrototype%.entries.
 
-- %EnumTablePrototype%[\@\@toStringTag]: `"Enum Table"`.
+- %EnumTablePrototype%[\@\@toStringTag]: The String value `"Enum Table"`.
 
 #### Implementation Tips
 
@@ -718,9 +873,13 @@ The semantics are pretty obvious:
 - A runtime error would be thrown if a spread operand's key conflicts with a builtin enum key.
 - The key list is resolved and deduplicated *before* it gets translated into an enum, so later keys/values can override previous keys/values.
 
+I'd rather provide a minimal, purely syntactic means of doing this, instead of creating a whole new global for everything to complicate the picture further.
+
 ### Abstract Data Types
 
-Yes, I'm popping this one early. This would involve a few things:
+Yes, I'm popping this one early, because I know it'll be requested very quickly. I do understand the use of it - classes are nice when you're dealing with state, but when you're dealing primarily with structure, we need to be seeing less of [this](https://github.com/mishoo/UglifyJS2/blob/master/lib/ast.js#L129-L862) and we need to offer ways to allow engines to optimize polymorphic structures in high-performance situations without resorting to hacks like [this](https://github.com/infernojs/inferno/blob/master/packages/inferno/src/core/implementation.ts#L60-L89) or [this](https://github.com/MithrilJS/mithril.js/blob/next/render/vnode.js). And the best way to do it is to give them a hint on how they should lay out that structure without letting type maps get too much in the way.
+
+This would involve a few things:
 
 1. New syntax, of course. :slightly_smiling_face:
 
@@ -728,26 +887,27 @@ Yes, I'm popping this one early. This would involve a few things:
     // Of course, you can still specify the type of the discriminant. The enum
     // itself and each variant is equipped with a `Symbol.hasInstance` to deal
     // with it.
-    enum class Foo: String {
+    enum class Foo: SomeType {
         // Simple variants with inferred values
-        Simple(one, two, three),
+        simple(one, two, three),
 
         // Variants with explicit values.
-        WithDesc(one, two, three) = "desc",
+        withDesc(one, two, three) = "desc",
 
         // Zero-argument singleton variants with inferred values.
-        SingletonVariant,
+        singletonVariant,
 
         // Zero-argument singleton variants with explicit values.
-        SingletonVariantWithDesc = "desc",
+        singletonVariantWithDesc = "desc",
 
         // This is intentionally invalid. Don't use it.
-        // SingletonVariant(),
+        // singletonFactory(),
 
-        // The enum itself can have static or instance methods. Note that these
+        // The enum itself can have static or prototype methods. Note that these
         // are disambiguated by the presence of a block start, rather than a
-        // comma or equal sign. Enum variants can't have public fields like
-        // what's proposed for normal classes, since they aren't normal objects.
+        // comma or equal sign. Enum variants can't have public instance fields
+        // like what's proposed for normal classes, since instances are not
+        // normal objects. (They *are* ordinary objects, but they're frozen.)
         instanceMethod() {
             // ...
         }
@@ -761,17 +921,101 @@ Yes, I'm popping this one early. This would involve a few things:
     const foo = Foo.Simple(1, 2, 3)
     const bar = Foo.WithDesc(1, 2, 3)
     const baz = Foo.SingletonVariant
+
+    // If you want immutability:
+    const enum class Foo {
+        // ...
+    }
     ```
 
 1. Enum classes are not frozen. They are instead [immutable prototype exotic objects](https://tc39.github.io/ecma262/#sec-immutable-prototype-exotic-objects), with the normal builtin enum methods non-writable, non-configurable. Custom methods may be added at will, as long as they don't conflict with the builtin stuff.
 
-1. Enum classes themselves have the typical methods of standard enums, but constructed variants inherit from `Enum.prototype`, which inherits from another prototype which itself inherits from `null`. It doesn't inherit from %EnumVariantPrototype%.
+1. Enum classes themselves have a few of the typical properties and methods of standard enums, but are not themselves enums. Here's what they have:
 
-1. There's a few other helpful things for enum classes, their variants/instances, etc.
+    - `Enum.parse(value)` - Convert a JSON-serialized record to an enum instance. Mostly the inverse of `Enum.prototype.toJSON`.
+    - `Enum.name` - This is a reference to the enum class's name, or the empty string if it's anonymous.
+    - `Enum.variants` - This is a reference to the enum for all the variant types. Each variant has the same name as their variant constructor, and their values correspond to the values of the enum class.
+    - `Enum.constructors` - This is a table to remap enum variant types to their variant constructors. This is in part for convenience, but also in part to help implement `Enum.prototype.constructor` as a getter.
+    - `Enum[Symbol.hasInstance]` - This is an alias of `Function.prototype[Symbol.hasInstance]`.
+    - `Enum[Symbol.toVariant]` - This is an alias of `Function.prototype[Symbol.toVariant]`.
 
-    - Enum classes each have an own method `Enum.Variant.create({...members})` for easier creation. This can be overridden, of course (just note that `super` won't work).
-    - Enum classes have an associated enum `Enum.variants` which hold all the variants. `Enum.Variant.type` and `instance.type` both return members of this enum.
-    - Enum classes have an associated table `Enum.constructors` to remap enum variant types to their functions, for convenience and in part to implement `Enum.Variant.constructor` as a getter.
-    - Like with normal enum variants, `instance.toJSON()` would return a JSON representation of the instance.
-    - Enum instances and their constructors have `instance.type` to return an instance's type. These types are normal enum variants, generated internally.
-    - Like with normal enum variants, constructed variants are similarly frozen after instantiation and enum class constructors are effectively frozen.
+1. Enum class variant constructors are normal functions that return new enum class instances. No check is made to verify `new.target`, so it can be called or constructed. Each variant constructor also has an own `Variant.create({key: value, ...})` method to create a new instance from an object with named properties where missing properties are silently set to `undefined`, for readability and convenience. (Properties that the variant doesn't have are silently ignored.)
+
+1. `Enum.prototype` itself is non-configurable, non-writable, non-enumerable, inherits from `null`, and is created from scratch for every enum class (as most of it is specific to the enum itself). There are a few utility properties and methods on it:
+
+    - `instance.type` - Get the instance's variant type.
+    - `instance.enum` - Get the instance's enum class.
+    - `instance.constructor` - Get the instance's variant constructor. Note that this is a *getter*, not a data property.
+    - `instance.update({key: value, ...})` - Return a shallow clone of this instance with the relevant keys set to those values. Properties that the variant doesn't have are silently ignored. This is only present on `const enum class`es, as it's only necessary there.
+    - `instance.toJSON()` - Convert this object to a representation safe for `JSON.stringify`.
+    - `instance[Symbol.iterator]()` - Iterate this enum's values.
+
+1. Enum class instances are frozen objects that inherit from `Enum.prototype`, and the relevant names from each variant are exposed on the *prototype* via getters and setters, not the object itself. This allows the objects to remain monomorphic while retaining the ability to access their data by property name.
+
+    - A `TypeError` is thrown if a property is accessed on an instance whose variant type lacks the property. This is checked in the getter
+    - These would have two internal slots: one for the variant type and another for the value.
+    - It's an early error if any member type is one of the pre-existing properties on `Enum.prototype`, and it's an early error to declare duplicate parameters.
+
+I don't have exacts nailed down for this, but I can see the use of it.
+
+If you want to see one form in action, here's Mithril's vnode structure rewritten to leverage this:
+
+```js
+enum class Vnode {
+    // These extra properties are used internally for state.
+    DOMSingle(dom, domSize, state, events, tag, key, attrs, text),
+    DOMMulti(dom, domSize, state, events, tag, key, attrs, children),
+    Component(dom, domSize, state, instance, tag, key, attrs, children),
+    FragmentSimple(dom, domSize, state, children),
+    FragmentAttrs(dom, domSize, state, key, attrs, children),
+    Text(dom, text),
+    Trust(dom, domSize, text),
+
+    static hyperscriptSingle(tag, key, attrs, text) {
+        return Vnode.DOMSingle.create({tag, key, attrs, text})
+    }
+
+    static hyperscriptMulti(tag, key, attrs, children) {
+        return Vnode.DOMMulti.create({tag, key, attrs, children})
+    }
+
+    static component(tag, attrs, children) {
+        return Vnode.Component.create({tag, key: attrs.key, attrs, children})
+    }
+
+    static text(text) {
+        if (text == null) text = ""
+        return Vnode.Text.create({text})
+    }
+
+    static trust(html) {
+        if (html == null) html = ""
+        return Vnode.Trust.create({html})
+    }
+
+    static normalize(node) {
+        if (Array.isArray(node)) {
+            return Vnode.FragmentSimple.create({
+                children: Vnode.normalizeChildren(node),
+            })
+        } else if (node != null && typeof node !== "object") {
+            return Vnode.Text({text: node === false ? "" : `${node}`})
+        } else {
+            return node
+        }
+    }
+
+    static normalizeChildren(input) {
+        const children = []
+        for (let i = 0; i < input.length; i++) {
+            children[i] = Vnode.normalize(input[i])
+        }
+        return children
+    }
+}
+```
+
+## Things I've considered, but rejected
+
+- Flags enums. I know these are useful, and I use bit masks myself on occasion, but there's too much variation on how to handle these to make these worthwhile. I did explain how you could factor them in to an extent through a custom value enum type (the `Flags` enum type above), but in practice, most uses of flags enums are really just using the enum as a namespace for constants, not really using it as an *enumeration*. Bit masks are closer to miniature structs rather than enum variants, like a bunch of booleans packed with the occasional possible embedded enum variant. I could see, however, a standard library module justified for working with bit masks, complete with the above `Flags` enum type, but enums are just the wrong tool here for general use.
+    - If the `Flags` enum type were to make it, I'd prefer it to be `Number.Flags` + `BigInt.Flags`, so it's clearly tied to the integer type. But that's as far as I feel anyone should go.
