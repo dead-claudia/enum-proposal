@@ -119,7 +119,7 @@ enum Foo: SomeType {
     // `enum foo: Number`, or `FOO = Symbol("Foo.FOO")` for `enum foo: Symbol`.
     FOO,
     // Values may be specified, and the result of calling
-    // `SomeType[Symbol.variant]` with it and the relevant context is used as
+    // `SomeType[Symbol.toVariant]` with it and the relevant context is used as
     // the return value for `value`, `toString`, `valueOf`, and `toJSON`.
     BAR = FOO.value.name + "bar",
 }
@@ -230,12 +230,19 @@ There is a new well-known symbol \@\@toVariant, for coercing a value to an enum 
 Here are some builtin implementations for this well-known symbol:
 
 ```js
+// Private helper
+const _genSym = context => {
+    return Symbol(`${context.enum.name || '<anonymous>'}.${context.key}`)
+}
+
 Object[Symbol.toVariant] = (value, context) => {
-    return _inferVariantSymbol(value, context, false)
+    return context != null && context.infer ? _genSym(context) : value
 }
 
 Symbol[Symbol.toVariant] = (value, context) => {
-    return _inferVariantSymbol(value, context, true)
+    if (context != null && context.infer) return _genSym(context)
+    if (typeof value === "symbol") return value
+    throw new TypeError("`value` is not a symbol!")
 }
 
 String[Symbol.toVariant] = (value, context) => {
@@ -259,28 +266,8 @@ BigInt[Symbol.toVariant] = (value, context) => {
 }
 
 Function.prototype[Symbol.toVariant] = function (value, context) {
-    if (context != null && context.infer || !(value instanceof this)) {
-        // The side effects within `_inferName` and `this.name` don't really
-        // exist
-        throw new TypeError(
-            `Expected ${_inferName(context)} to be an instance of ${this.name}`
-        )
-    }
-    return value
-}
-
-// Private helper functions.
-function _inferName(context) {
-    return context != null
-        ? `${context.enum.name || '<anonymous>'}.${context.key}`
-        : "`value`"
-}
-
-function _inferVariantSymbol(value, context, checkSymbol) {
-    if (context != null && context.infer) return Symbol(_inferName(context))
-    if (checkSymbol && typeof value !== "symbol") {
-        // The side effects within `_inferName` don't really exist
-        throw new TypeError(`Expected ${_inferName(context)} to be a symbol`)
+    if (context != null && ctx.infer || !(value instanceof this)) {
+        throw new TypeError("Expected `value` to be an instance of `this`")
     }
     return value
 }
